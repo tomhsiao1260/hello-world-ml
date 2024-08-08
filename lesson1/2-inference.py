@@ -1,8 +1,18 @@
-## PyTorch Lightning: https://pypi.org/project/pytorch-lightning
+# PyTorch Lightning: https://pypi.org/project/pytorch-lightning
 
 import torch
+import numpy as np
+import scipy.stats as st
 import pytorch_lightning as pl
+import torch.nn.functional as F
 from timesformer_pytorch import TimeSformer
+
+def gkern(kernlen=21, nsig=3):
+  """Returns a 2D Gaussian kernel."""
+  x = np.linspace(-nsig, nsig, kernlen+1)
+  kern1d = np.diff(st.norm.cdf(x))
+  kern2d = np.outer(kern1d, kern1d)
+  return kern2d / kern2d.sum()
 
 class RegressionPLModel(pl.LightningModule):
   def __init__(self):
@@ -36,8 +46,18 @@ if __name__ == "__main__":
 
   # (3, 1, 26, 64, 64) -> (3, 26, 1, 64, 64) -> (3, 16) -> (3, 1, 4, 4)
   images = torch.randn(3, 1, 26, 64, 64)
-  pred = model(images)
-  pred = torch.sigmoid(pred).to('cpu')
-  print(pred)
+  with torch.no_grad():
+    with torch.autocast(device_type=device_type):
+      preds = model(images)
+  preds = torch.sigmoid(preds).to('cpu')
+
+  # (4, 4) -> (64, 64)
+  for pred in preds:
+    print('predict: ', pred.shape, pred)
+    kernel = gkern(64, 1)
+    kernel = kernel / kernel.max()
+    pred = np.multiply(F.interpolate(pred.unsqueeze(0).float(), scale_factor=16, mode='bilinear').squeeze(0).squeeze(0).numpy(), kernel)
+    print('kernel predict: ', pred.shape)
+
 
 

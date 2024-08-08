@@ -3,3 +3,6 @@ env/
 
 /model/*
 !/model/.gitkeep
+
+/data/*
+!/data/.gitkeep

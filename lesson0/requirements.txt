@@ -1,2 +1,2 @@
 numpy
-pytorch-lightning
+pytorch-lightning==2.0.9

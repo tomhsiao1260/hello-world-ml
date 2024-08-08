@@ -3,14 +3,22 @@
 Virtual environment
 
 ```bash
-conda create --name hello-world
-conda activate hello-world
+conda create --name hello-world-ml
+conda activate hello-world-ml
+
+conda install pip
+```
+
+Use Cuda. Checkout [here](https://pytorch.org/get-started/locally/).
+
+```bash
+conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
 ```
 
 Install dependency
 
 ```bash
-conda install --yes --file requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Run App
@@ -24,9 +32,9 @@ python app.py
 ```bash
 conda env list
 
-conda activate hello-world
+conda activate hello-world-ml
 conda deactivate
 
-conda create --name hello-world
-conda env remove --name hello-world
+conda create --name hello-world-ml
+conda env remove --name hello-world-ml
 ```
