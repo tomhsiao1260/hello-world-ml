@@ -37,7 +37,7 @@ def read_image_mask(segment_id, start_idx, end_idx, rotation=0):
   fragment_mask = cv2.imread(f"{segment_path}/{segment_id}/{segment_id}_mask.png", 0)
 
   h, w = fragment_mask.shape
-  xs, xe, ys, ye = w * uv_min[0], w * uv_max[0], h * (1 - uv_max[1]), h * (1 - uv_min[0])
+  xs, xe, ys, ye = w * uv_min[0], w * uv_max[0], h * (1 - uv_max[1]), h * (1 - uv_min[1])
   xs, xe, ys, ye = int(xs), int(xe), int(ys), int(ye)
   fragment_mask = fragment_mask[ys: ye, xs: xe]
 

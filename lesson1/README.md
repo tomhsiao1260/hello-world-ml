@@ -29,3 +29,16 @@ Download the model [here](https://drive.google.com/drive/folders/1rn3GMOvtJRMBHO
 ```bash
 python inference.py
 ```
+
+## Note
+
+`1-inference`: use TimeSformer
+`2-inference`: use our checkpoint
+`3-inference`: use real data
+`4-inference`: use DataLoader
+
+Inference smaller region if you have memory issue.
+
+Homework: Record your observations in other areas.
+
+
