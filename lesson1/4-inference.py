@@ -17,8 +17,11 @@ device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_type)
 
 segment_path = './data/'
-fragment_id = 'casey_pi'
+segment_id = 'casey_pi'
 model_path = './model/timesformer_wild15_20230702185753_0_fr_i3depoch=12.ckpt'
+
+uv_min = [0, 0]
+uv_max = [1, 1]
 
 def gkern(kernlen=21, nsig=3):
   """Returns a 2D Gaussian kernel."""
@@ -40,40 +43,50 @@ class CFG:
   num_workers = 4
   # num_workers = 16
 
-def read_image_mask(fragment_id, start_idx=18, end_idx=38, rotation=0):
+def read_image_mask(segment_id, start_idx=18, end_idx=38, rotation=0):
   image_stack = []
   mid = 65 // 2
-  start = mid - CFG.in_chans // 2
-  end = mid + CFG.in_chans // 2
 
+  # mask processing
+  fragment_mask = cv2.imread(f"{segment_path}/{segment_id}/{segment_id}_mask.png", 0)
+
+  h, w = fragment_mask.shape
+  xs, xe, ys, ye = w * uv_min[0], w * uv_max[0], h * (1 - uv_max[1]), h * (1 - uv_min[0])
+  xs, xe, ys, ye = int(xs), int(xe), int(ys), int(ye)
+  fragment_mask = fragment_mask[ys: ye, xs: xe]
+
+  pad0 = (256 - (ye-ys) % 256)
+  pad1 = (256 - (xe-xs) % 256)
+  fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+
+  # image stack processing
   for i in range(start_idx, end_idx):
-    image = cv2.imread(f"{segment_path}/{fragment_id}/layers/{i:02}.tif", 0)
-    pad0 = (256 - image.shape[0] % 256)
-    pad1 = (256 - image.shape[1] % 256)
+    image = cv2.imread(f"{segment_path}/{segment_id}/layers/{i:02}.tif", 0)
+    image = image[ys: ye, xs: xe]
     image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
     image = np.clip(image, 0, 200)
     image_stack.append(image)
-  
+
   image_stack = np.stack(image_stack, axis=2)
-  fragment_mask = cv2.imread(f"{segment_path}/{fragment_id}/{fragment_id}_mask.png", 0)
-  fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+  image_shape = (h + pad0, w + pad1)
+  image_coord = (xs, ys, xe + pad1, ye + pad0)
 
-  return image_stack, fragment_mask
+  return image_stack, fragment_mask, image_shape, image_coord
 
-def get_img_splits(fragment_id, start_idx, end_idx, rotation=0):
-  image_stack, fragment_mask = read_image_mask(fragment_id, start_idx, end_idx)
+def get_img_splits(segment_id, start_idx, end_idx, rotation=0):
+  image_stack, fragment_mask, image_shape, (xs, ys, xe, ye) = read_image_mask(segment_id, start_idx, end_idx)
 
   images = []
   coords = []
-  x_list = list(range(0, image_stack.shape[1]-CFG.tile_size+1, CFG.stride))
-  y_list = list(range(0, image_stack.shape[0]-CFG.tile_size+1, CFG.stride))
+  x_list = list(range(xs, xe-CFG.tile_size+1, CFG.stride))
+  y_list = list(range(ys, ye-CFG.tile_size+1, CFG.stride))
 
   for ymin in y_list:
     for xmin in x_list:
       ymax = ymin + CFG.tile_size
       xmax = xmin + CFG.tile_size
-      if not np.any(fragment_mask[ymin:ymax, xmin:xmax]==0):
-        images.append(image_stack[ymin:ymax, xmin:xmax])
+      if not np.any(fragment_mask[ymin-ys:ymax-ys, xmin-xs:xmax-xs]==0):
+        images.append(image_stack[ymin-ys:ymax-ys, xmin-xs:xmax-xs])
         coords.append([xmin, ymin, xmax, ymax])
 
   transform = A.Compose([
@@ -84,9 +97,7 @@ def get_img_splits(fragment_id, start_idx, end_idx, rotation=0):
 
   coords = np.stack(coords)
   dataset = CustomDatasetTest(images, coords, CFG, transform=transform)
-  # dataset = CustomDatasetTest(images[:1000], coords[:1000], CFG, transform=transform)
   loader = DataLoader(dataset, batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
-  image_shape = (image_stack.shape[0], image_stack.shape[1])
 
   return loader, coords, image_shape, fragment_mask
 
@@ -133,14 +144,14 @@ class RegressionPLModel(pl.LightningModule):
     x = x.view(-1, 1, 4, 4)      
     return x
 
-def predict_fn(loader, model, device, image_shape):
+def predict_fn(loader, model, image_shape):
   kernel = gkern(CFG.size, 1)
   kernel = kernel / kernel.max()
 
   mask_pred = np.zeros(image_shape)
   mask_count = np.zeros(image_shape)
 
-  predict_folder = f"./predict/{fragment_id}/"
+  predict_folder = f"./predict/{segment_id}/"
   if os.path.exists(predict_folder): shutil.rmtree(predict_folder)
   os.makedirs(predict_folder, exist_ok=True)
 
@@ -157,10 +168,10 @@ def predict_fn(loader, model, device, image_shape):
       mask_pred[y1:y2, x1:x2] += np.multiply(F.interpolate(y_preds[i].unsqueeze(0).float(), scale_factor=16, mode='bilinear').squeeze(0).squeeze(0).numpy(), kernel)
       mask_count[y1:y2, x1:x2] += np.ones((CFG.size, CFG.size))
 
-    filename = f"./predict/{fragment_id}/{fragment_id}_{step}.png"
+    filename = f"./predict/{segment_id}/{segment_id}_{step}.png"
     image_save(filename, mask_pred.copy(), mask_count.copy())
 
-  filename = f"./predict/{fragment_id}/{fragment_id}.png"
+  filename = f"./predict/{segment_id}/{segment_id}.png"
   image_save(filename, mask_pred.copy(), mask_count.copy())
 
 def image_save(filename, mask_pred, mask_count):
@@ -178,9 +189,9 @@ if __name__ == "__main__":
 
   start_idx = 17
   end_idx = start_idx + 26
-  loader, coords, image_shape, fragment_mask = get_img_splits(fragment_id, start_idx, end_idx)
+  loader, coords, image_shape, fragment_mask = get_img_splits(segment_id, start_idx, end_idx)
 
-  predict_fn(loader, model, device, image_shape)
+  predict_fn(loader, model, image_shape)
 
   del loader, model
   torch.cuda.empty_cache()
