@@ -38,3 +38,8 @@ conda deactivate
 conda create --name hello-world-ml
 conda env remove --name hello-world-ml
 ```
+
+## Data Agreement
+
+To access the data in Vesuvius Challenge, please fill in [this form](https://forms.gle/HV1J6dJbmCB2z5QL8) in advance.
+
