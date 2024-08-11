@@ -1,8 +1,8 @@
 import os
+import sys
 import cv2
 import gc
 import torch
-import shutil
 import numpy as np
 import scipy.stats as st
 from tqdm.auto import tqdm
@@ -43,7 +43,7 @@ class CFG:
   num_workers = 4
   # num_workers = 16
 
-def read_image_mask(segment_id, start_idx=18, end_idx=38, rotation=0):
+def read_image_mask(segment_id, start_idx, end_idx, rotation=0):
   image_stack = []
   mid = 65 // 2
 
@@ -55,21 +55,16 @@ def read_image_mask(segment_id, start_idx=18, end_idx=38, rotation=0):
   xs, xe, ys, ye = int(xs), int(xe), int(ys), int(ye)
   fragment_mask = fragment_mask[ys: ye, xs: xe]
 
-  pad0 = (256 - (ye-ys) % 256)
-  pad1 = (256 - (xe-xs) % 256)
-  fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
-
   # image stack processing
   for i in range(start_idx, end_idx):
     image = cv2.imread(f"{segment_path}/{segment_id}/layers/{i:02}.tif", 0)
     image = image[ys: ye, xs: xe]
-    image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
     image = np.clip(image, 0, 200)
     image_stack.append(image)
 
   image_stack = np.stack(image_stack, axis=2)
-  image_shape = (h + pad0, w + pad1)
-  image_coord = (xs, ys, xe + pad1, ye + pad0)
+  image_shape = (h, w)
+  image_coord = (xs, ys, xe, ye)
 
   return image_stack, fragment_mask, image_shape, image_coord
 
@@ -78,16 +73,22 @@ def get_img_splits(segment_id, start_idx, end_idx, rotation=0):
 
   images = []
   coords = []
+  (h, w) = image_shape
   x_list = list(range(xs, xe-CFG.tile_size+1, CFG.stride))
   y_list = list(range(ys, ye-CFG.tile_size+1, CFG.stride))
 
   for ymin in y_list:
     for xmin in x_list:
+      if (ymin > h-CFG.tile_size): ymin = h-CFG.tile_size
+      if (xmin > w-CFG.tile_size): xmin = w-CFG.tile_size
       ymax = ymin + CFG.tile_size
       xmax = xmin + CFG.tile_size
+
       if not np.any(fragment_mask[ymin-ys:ymax-ys, xmin-xs:xmax-xs]==0):
         images.append(image_stack[ymin-ys:ymax-ys, xmin-xs:xmax-xs])
         coords.append([xmin, ymin, xmax, ymax])
+
+  if len(coords) == 0: return None, None, None, None
 
   transform = A.Compose([
     A.Resize(CFG.size, CFG.size),
@@ -152,12 +153,10 @@ def predict_fn(loader, model, image_shape):
   mask_count = np.zeros(image_shape)
 
   predict_folder = f"./predict/{segment_id}/"
-  if os.path.exists(predict_folder): shutil.rmtree(predict_folder)
   os.makedirs(predict_folder, exist_ok=True)
 
   for step, (images, coords) in tqdm(enumerate(loader), total=len(loader)):
     images = images.to(device)
-    batch_size = images.size(0)
 
     with torch.no_grad():
       with torch.autocast(device_type=device_type):
@@ -168,28 +167,33 @@ def predict_fn(loader, model, image_shape):
       mask_pred[y1:y2, x1:x2] += np.multiply(F.interpolate(y_preds[i].unsqueeze(0).float(), scale_factor=16, mode='bilinear').squeeze(0).squeeze(0).numpy(), kernel)
       mask_count[y1:y2, x1:x2] += np.ones((CFG.size, CFG.size))
 
-    filename = f"./predict/{segment_id}/{segment_id}_{step}.png"
-    image_save(filename, mask_pred.copy(), mask_count.copy())
+  data = process_image(mask_pred.copy(), mask_count.copy())
 
   filename = f"./predict/{segment_id}/{segment_id}.png"
-  image_save(filename, mask_pred.copy(), mask_count.copy())
+  if os.path.exists(filename):
+    prev = cv2.imread(filename, 0)
+    data = np.where((data != 0) & (prev != 0), data // 2 + prev // 2, data + prev)
 
-def image_save(filename, mask_pred, mask_count):
+  cv2.imwrite(filename, data)
+
+def process_image(mask_pred, mask_count):
   mask_count[mask_count == 0] = 1
 
   data = mask_pred / mask_count
   data = np.clip(np.nan_to_num(data), a_min=0, a_max=1)
   data /= data.max()
   data = (data * 255).astype(np.uint8)
-  cv2.imwrite(filename, data)
+  return data
 
 if __name__ == "__main__":
-  model = RegressionPLModel.load_from_checkpoint(model_path, map_location=device, strict=False)
-  model.eval()
-
   start_idx = 17
   end_idx = start_idx + 26
+
   loader, coords, image_shape, fragment_mask = get_img_splits(segment_id, start_idx, end_idx)
+  if (loader == None): sys.exit()
+
+  model = RegressionPLModel.load_from_checkpoint(model_path, map_location=device, strict=False)
+  model.eval()
 
   predict_fn(loader, model, image_shape)
 
