@@ -5,8 +5,13 @@ Virtual environment
 ```bash
 conda create --name hello-world-ml
 conda activate hello-world-ml
+```
 
+Use the latest pip
+
+```bash
 conda install pip
+pip install --upgrade pip
 ```
 
 Use Cuda. Checkout [here](https://pytorch.org/get-started/locally/).
