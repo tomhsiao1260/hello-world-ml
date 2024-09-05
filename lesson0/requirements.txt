@@ -1,2 +1,7 @@
-numpy
-pytorch-lightning==2.0.9
+timm 
+albumentations 
+pytorch-lightning==2.0.9 
+monai[einops]
+pandas
+matplotlib
+timesformer-pytorch

@@ -9,13 +9,10 @@ conda activate hello-world-ml
 
 Use Cuda. Checkout [here](https://pytorch.org/get-started/locally/).
 
-```bash
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-```
-
 Install dependency
 
 ```bash
+conda install pip
 pip install -r requirements.txt
 ```
 
